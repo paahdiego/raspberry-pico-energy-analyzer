@@ -14,12 +14,10 @@ pico_sdk_init()
 add_subdirectory(SSD1306_OLED_PICO)
 
 add_executable(main
-        main.cpp
+        main.cpp 
 )
 
 target_compile_definitions(main PRIVATE
-        WIFI_SSID=\"$ENV{WIFI_SSID}\"
-        WIFI_PASSWORD=\"$ENV{WIFI_PASSWORD}\"
 )
 
 target_include_directories(main PRIVATE

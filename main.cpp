@@ -15,9 +15,13 @@
 
 #include <lwip/raw.h>
 #include <lwip/tcp.h>
+#include "lwip/dns.h"
 
 #define SAMPLE_RATE 12000
 #define SAMPLE_AMOUNT 100
+
+char WIFI_SSID[] = "PPGEE_LREI";
+char WIFI_PASSWORD[] = "LREI0987";
 
 #define myOLEDwidth 128
 #define myOLEDheight 64
@@ -28,7 +32,6 @@ const uint16_t I2C_Speed = 100;
 const uint8_t I2C_Address = 0x3C;
 
 SSD1306 myOLED(myOLEDwidth, myOLEDheight);
-
 
 struct EanWaveform {
   uint32_t id;
@@ -49,6 +52,72 @@ struct CalculateStuffArgs {
 struct DisplayStuffArgs {
   QueueHandle_t rmsFull, rmsEmpty;
 };
+
+void setupDisplay(void);
+void turnOffDisplay();
+void printDisplayData(const RMSWaveform *rmsWaveform);
+void setupADC();
+void adcIRQHandler();
+float calculateRMS(const int16_t *samples, int sampleAmount, float gain);
+
+static void calculateStuff(CalculateStuffArgs *args) {
+  while (true) {
+    EanWaveform *eanBuffer = 0;
+    RMSWaveform *rmsBuffer = 0;
+
+    while (!xQueueReceive(args->waveFull, &eanBuffer, portMAX_DELAY));
+    
+    while (!xQueueReceive(args->rmsEmpty, &rmsBuffer, portMAX_DELAY));
+    
+    float voltageRMS = calculateRMS(eanBuffer->voltage, sizeof(eanBuffer->voltage) / sizeof(int16_t), args->vGain);
+    float currentRMS = calculateRMS(eanBuffer->current, sizeof(eanBuffer->current) / sizeof(int16_t), args->iGain);
+    float instantPowerSum = 0.0;
+    float voltageMean = 0.0;
+    float currentMean = 0.0;
+
+    for (int i = 0; i < 100; i++) {
+      voltageMean += eanBuffer->voltage[i];
+      currentMean += eanBuffer->current[i];
+    }
+
+    voltageMean = voltageMean / 100.0;
+    currentMean = currentMean / 100.0;
+    
+    for (int i = 0; i < 100; i++) {
+      instantPowerSum += (eanBuffer->voltage[i] - voltageMean) * (eanBuffer->current[i] - currentMean);
+    }
+
+    float power = voltageRMS * currentRMS;
+    float powerGain = (args->vGain * args->iGain);
+    float activePower = powerGain * (instantPowerSum / 100.0);
+    
+    float reactivePower = sqrt(pow(power, 2) - pow(activePower, 2));
+
+    float powerFactor = activePower / power;
+
+    rmsBuffer->id = eanBuffer->id;
+    rmsBuffer->voltage = voltageRMS;
+    rmsBuffer->current = currentRMS;
+    rmsBuffer->power = power;
+    rmsBuffer->activePower = activePower;
+    rmsBuffer->reactivePower = reactivePower;
+    rmsBuffer->powerFactor = powerFactor;
+    while (!xQueueSend(args->waveEmpty, &eanBuffer, portMAX_DELAY));
+    while (!xQueueSend(args->rmsFull, &rmsBuffer, portMAX_DELAY));
+  }
+}
+
+static void displayStuff(DisplayStuffArgs *args) {
+  while(true){
+    RMSWaveform *rmsBuffer = 0;
+    
+    while (!xQueueReceive(args->rmsFull, &rmsBuffer, portMAX_DELAY));
+        
+    printDisplayData(rmsBuffer);
+    vTaskDelay(5000);
+    while (!xQueueSend(args->rmsEmpty, &rmsBuffer, portMAX_DELAY));
+  }
+}
 
 static void connectWifi(void *) {
     printf("Starting wifi...\n");
@@ -81,75 +150,6 @@ static void connectWifi(void *) {
     }
 }
 
-void setupDisplay(void);
-void turnOffDisplay();
-void printDisplayData(const RMSWaveform *rmsWaveform);
-void setupADC();
-void adcIRQHandler();
-float calculateRMS(const int16_t *samples, int sampleAmount, float gain);
-
-static void calculateStuff(CalculateStuffArgs *args) {
-  while (true) {
-    EanWaveform *eanBuffer = 0;
-    RMSWaveform *rmsBuffer = 0;
-
-    while (!xQueueReceive(args->waveFull, &eanBuffer, portMAX_DELAY));
-    
-    while (!xQueueReceive(args->rmsEmpty, &rmsBuffer, portMAX_DELAY));
-    
-    float voltageRMS = calculateRMS(eanBuffer->voltage, sizeof(eanBuffer->voltage) / sizeof(int16_t), args->vGain);
-    float currentRMS = calculateRMS(eanBuffer->current, sizeof(eanBuffer->current) / sizeof(int16_t), args->iGain);
-
-    float instantPowerSum = 0.0;
-    float voltageMean = 0.0;
-    float currentMean = 0.0;
-
-    for (int i = 0; i < 100; i++) {
-      voltageMean += eanBuffer->voltage[i];
-      currentMean += eanBuffer->current[i];
-    }
-
-    voltageMean = voltageMean / 100.0;
-    currentMean = currentMean / 100.0;
-    
-    for (int i = 0; i < 100; i++) {
-      instantPowerSum += (eanBuffer->voltage[i] - voltageMean) * (eanBuffer->current[i] - currentMean);
-    }
-
-    float power = voltageRMS * currentRMS;
-    float powerGain = (args->vGain * args->iGain);
-    float activePower = powerGain * (instantPowerSum / 100.0);
-    
-    float reactivePower = sqrt(pow(power, 2) - pow(activePower, 2));
-
-    float powerFactor = activePower / power;
-
-    rmsBuffer->id = eanBuffer->id;
-    rmsBuffer->voltage = voltageRMS;
-    rmsBuffer->current = currentRMS;
-    rmsBuffer->power = power;
-    rmsBuffer->activePower = activePower;
-    rmsBuffer->reactivePower = reactivePower;
-    rmsBuffer->powerFactor = powerFactor;
-
-    while (!xQueueSend(args->waveEmpty, &eanBuffer, portMAX_DELAY));
-    while (!xQueueSend(args->rmsFull, &rmsBuffer, portMAX_DELAY));
-  }
-}
-
-static void displayStuff(DisplayStuffArgs *args) {
-  while(true){
-    RMSWaveform *rmsBuffer = 0;
-    
-    while (!xQueueReceive(args->rmsFull, &rmsBuffer, portMAX_DELAY));
-        
-    printDisplayData(rmsBuffer);
-    
-    while (!xQueueSend(args->rmsEmpty, &rmsBuffer, portMAX_DELAY));
-    
-  }
-}
-
 volatile EanWaveform *buffer = 0;
 volatile int currentId = 0;
 volatile int currentBufferIndex = 0;
@@ -166,15 +166,17 @@ int main() {
   gpio_set_dir(5, GPIO_OUT);
   gpio_put(5, 1);
 
-  for (int i=0; i<10; ++i) {
-    printf("Booting in %d...\n", 10-i);
+  for (int i=0; i<6; ++i) {
+    printf("Booting in %d...\n", 6-i);
     sleep_ms(1000);
   }
 
-  printf("%s\n" , WIFI_SSID);
-  printf("%s\n" , WIFI_PASSWORD);
+  printf("WIFI_SSID: %s\n", WIFI_SSID);
+  printf("WIFI_PASSWORD: %s\n\n", WIFI_PASSWORD);
   
-  setupDisplay();
+  setupDisplay(); 
+  busy_wait_ms(1000);
+    
   setupADC();
 
   waveFullQueue = xQueueCreate(6, sizeof(EanWaveform *));
@@ -189,10 +191,10 @@ int main() {
     xQueueSend(waveEmptyQueue, &ean, portMAX_DELAY);
     xQueueSend(rmsEmptyQueue, &rms, portMAX_DELAY);
   }
-
+  
   float vGain = 1 /  ((1 / 120000.0) * 50 * (47/4.7) * (4096/3.3));
-  float iGain = 1 / ((1 / 1000.0) * 50 * (10/4.7) * (4096/3.3));
-
+  float iGain = 1 / (1./30. * 4096/3.3);
+  
   CalculateStuffArgs calculateArgs{
     waveFullQueue,
     waveEmptyQueue,
@@ -204,12 +206,14 @@ int main() {
 
   DisplayStuffArgs displayArgs{rmsFullQueue, rmsEmptyQueue};
 
-  xTaskCreate(connectWifi, "connectWifi", 4096, NULL, 10, NULL);
-  
-  xTaskCreate((TaskFunction_t)calculateStuff, "calculateStuff", 2048, &calculateArgs, 15, NULL);
-  xTaskCreate((TaskFunction_t)displayStuff, "displayStuff", 2048, &displayArgs,10, NULL);
+  printf("Creating tasks...\n\n");
 
-  printf("Starting FreeRTOS-SMP scheduler...\n");
+  // xTaskCreate(connectWifi, "connectWifi", 4096, NULL, 10, NULL);
+  
+  xTaskCreate((TaskFunction_t)calculateStuff, "calculateStuff", 2048, &calculateArgs, 5, NULL);
+  xTaskCreate((TaskFunction_t)displayStuff, "displayStuff", 2048, &displayArgs, 2, NULL);
+
+  printf("Starting FreeRTOS-SMP scheduler...\n\n");
   vTaskStartScheduler();
 
   turnOffDisplay();
@@ -217,8 +221,9 @@ int main() {
 
 void setupDisplay(void) {
   busy_wait_ms(500);
-
+  printf("Starting display setup...\n");
   while (myOLED.OLEDbegin(I2C_Address, i2c1, I2C_Speed, 18, 19) != true) {
+    printf("Connecting display...\n");
     busy_wait_ms(1500);
   }
   if (myOLED.OLEDSetBufferPtr(myOLEDwidth, myOLEDheight, screenBuffer,
@@ -228,6 +233,7 @@ void setupDisplay(void) {
     }
   }
   myOLED.OLEDFillScreen(0xF0, 0);
+  printf("Finished display setup...\n");
   busy_wait_ms(1000);
 }
 
@@ -282,8 +288,7 @@ void adcIRQHandler() {
     int16_t v = adc_fifo_get();
     int16_t i = adc_fifo_get();
     currentId++;
-    // v = 2000 + 1900 * sin(currentId * (60 * 2 * M_PI/6000));
-    // i = 2000 + 1900 * sin(currentId * (60 * 2 * M_PI/6000));
+    
     if (!buffer) {
       BaseType_t response =
           xQueueReceiveFromISR(waveEmptyQueue, &buffer, &wake);
@@ -317,6 +322,7 @@ void adcIRQHandler() {
 }
 
 void setupADC() {
+  printf("Setuping ADC... \n");
   adc_init();
   adc_gpio_init(26);
   adc_gpio_init(27);
@@ -331,4 +337,5 @@ void setupADC() {
   adc_fifo_setup(true, false, 2, false, false);
   adc_run(true);
   irq_set_enabled(ADC_IRQ_FIFO, true);
+  printf("Finished ADC setup...\n");
 }
