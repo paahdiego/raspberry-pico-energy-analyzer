@@ -14,10 +14,12 @@ pico_sdk_init()
 add_subdirectory(SSD1306_OLED_PICO)
 
 add_executable(main
-        main.cpp 
+        main.cpp
 )
 
 target_compile_definitions(main PRIVATE
+        pico_stdlib
+        pico_cyw43_arch_lwip_threadsafe_background
 )
 
 target_include_directories(main PRIVATE
