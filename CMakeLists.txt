@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.12)
 # Pull in SDK (must be before project)
 include(pico_sdk_import.cmake)
 include(FreeRTOS_Kernel_import.cmake)
+set(PICOTOOL_SKIP_BUILD 1)
 
 project(main C CXX ASM)
 

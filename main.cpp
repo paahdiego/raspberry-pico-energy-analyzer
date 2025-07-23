@@ -15,9 +15,9 @@
 #define INFLUX_IP_3 0
 #define INFLUX_IP_4 0
 #define INFLUX_PORT 8086
-#define INFLUX_ORG "changeme"
-#define INFLUX_BUCKET "changeme"
-#define INFLUX_TOKEN "changeme"
+#define INFLUX_ORG "change-me"
+#define INFLUX_BUCKET "change-me"
+#define INFLUX_TOKEN "change-me"
 
 #define SAMPLE_RATE 12000
 #define SAMPLE_AMOUNT 100
@@ -32,8 +32,8 @@ const uint8_t I2C_Address = 0x3C;
 
 SSD1306 myOLED(myOLEDwidth, myOLEDheight);
 
-char WIFI_SSID[] = "changeme";
-char WIFI_PASSWORD[] = "changeme";
+char WIFI_SSID[] = "change-me";
+char WIFI_PASSWORD[] = "change-me";
 
 struct EanWaveform {
   uint32_t id;
@@ -62,119 +62,10 @@ typedef struct {
     const RMSWaveform* data;
 } influx_client_t;
 
-volatile bool isConnected = false;
-
-static influx_client_t influxState;
-
-static err_t influxOnConnected(void *arg, struct tcp_pcb *tpcb, err_t err) {
-    influx_client_t* state = (influx_client_t*)arg;
-
-    if (err != ERR_OK) {
-        printf("Connection Error: %d\n", err);
-        state->complete = true;
-        return err;
-    }
-
-    state->connected = true;
-    printf("Connected to InfluxDB\n");
-
-    const RMSWaveform* data = state->data;
-
-    static char body[256];
-    snprintf(body, sizeof(body),
-        "pico2,source=pico_ev_charger id=%lu,voltage=%.2f,current=%.2f,activePower=%.2f,reactivePower=%.2f,power=%.2f,powerFactor=%.2f",
-        data->id, data->voltage, data->current, data->activePower,
-        data->reactivePower, data->power, data->powerFactor
-    );
-
-    static char request[512];
-    snprintf(request, sizeof(request),
-        "POST /api/v2/write?org=%s&bucket=%s&precision=s HTTP/1.1\r\n"
-        "Host: %d.%d.%d.%d\r\n"
-        "Authorization: Token %s\r\n"
-        "Content-Type: text/plain\r\n"
-        "Content-Length: %d\r\n"
-        "Connection: close\r\n"
-        "\r\n"
-        "%s",
-        INFLUX_ORG, INFLUX_BUCKET,
-        INFLUX_IP_1, INFLUX_IP_2, INFLUX_IP_3, INFLUX_IP_4,
-        INFLUX_TOKEN,
-        strlen(body),
-        body
-    );
-
-    tcp_write(tpcb, request, strlen(request), TCP_WRITE_FLAG_COPY);
-    return tcp_output(tpcb);
-}
-
-static err_t influxOnReceive(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
-    influx_client_t* state = (influx_client_t*)arg;
-
-    if (!p) {
-        printf("Connection closed by server\n\n");
-        state->complete = true;
-
-        if (tpcb) {
-            tcp_arg(tpcb, NULL);
-            tcp_close(tpcb);
-            state->pcb = NULL;
-        }
-
-        return ERR_OK;
-    }
-
-    char *response = (char*)malloc(p->tot_len + 1);
-    pbuf_copy_partial(p, response, p->tot_len, 0);
-    response[p->tot_len] = '\0';
-    printf("InfluxDB response:\n%s\n", response);
-    free(response);
-
-    tcp_recved(tpcb, p->tot_len);
-    pbuf_free(p);
-
-    return ERR_OK;
-}
-
-static void influxOnError(void *arg, err_t err) {
-    printf("TCP Error: %d\n", err);
-    influx_client_t* state = (influx_client_t*)arg;
-
-    if (state->pcb) {
-        tcp_abort(state->pcb);
-        state->pcb = NULL;
-    }
-
-    state->complete = true;
-}
-
-void sendToInflux(const RMSWaveform* data) {
-    if (!isConnected || influxState.pcb != NULL) return;
-
-    influxState = {0};
-    influxState.pcb = tcp_new();
-    influxState.data = data;
-
-    if (!influxState.pcb) {
-        printf("Failed to create PCB\n");
-        return;
-    }
-
-    tcp_arg(influxState.pcb, &influxState);
-    tcp_err(influxState.pcb, influxOnError);
-    tcp_recv(influxState.pcb, influxOnReceive);
-
-    ip_addr_t influx_ip;
-    IP4_ADDR(&influx_ip, INFLUX_IP_1, INFLUX_IP_2, INFLUX_IP_3, INFLUX_IP_4);
-
-    err_t err = tcp_connect(influxState.pcb, &influx_ip, INFLUX_PORT, influxOnConnected);
-    if (err != ERR_OK) {
-        printf("Failed to connect: %d\n", err);
-        tcp_abort(influxState.pcb);
-        influxState.pcb = NULL;
-    }
-}
-
+static err_t influxOnConnected(void *, struct tcp_pcb *, err_t);
+static err_t influxOnReceive(void *, struct tcp_pcb *, struct pbuf *, err_t);
+static void influxOnError(void *, err_t);
+void sendToInflux(const RMSWaveform*);
 void setupDisplay(void);
 void printDisplayData(const RMSWaveform *rmsWaveform);
 float calculateRMS(const int16_t *samples, int sampleAmount, float gain);
@@ -185,6 +76,9 @@ static void calculateStuff(CalculateStuffArgs *);
 static void displayStuff(DisplayStuffArgs *);
 static void connectWifiTask(void *);
 
+static influx_client_t influxState;
+
+volatile bool isConnected = false;
 volatile EanWaveform *buffer = 0;
 volatile int currentId = 0;
 volatile int currentBufferIndex = 0;
@@ -217,7 +111,7 @@ int main() {
 
   gpio_put(2, 0);
   gpio_put(5, 1);
-
+  
   waveFullQueue = xQueueCreate(6, sizeof(EanWaveform *));
   waveEmptyQueue = xQueueCreate(6, sizeof(EanWaveform *));
 
@@ -239,10 +133,9 @@ int main() {
   DisplayStuffArgs displayArgs{rmsFullQueue, rmsEmptyQueue};
 
   printf("Creating tasks...\n\n");
-
-  xTaskCreate(connectWifiTask, "wifiTask", 4096, NULL, 10, NULL);
-  xTaskCreate((TaskFunction_t)calculateStuff, "calculateStuff", 2048, &calculateArgs, 8, NULL);
-  xTaskCreate((TaskFunction_t)displayStuff, "displayStuff", 4096, &displayArgs, 3, NULL);
+  xTaskCreate(connectWifiTask, "wifiTask", 4096, NULL, 24, NULL);
+  xTaskCreate((TaskFunction_t)calculateStuff, "calculateStuff", 2048, &calculateArgs, 20, NULL);
+  xTaskCreate((TaskFunction_t)displayStuff, "displayStuff", 4096, &displayArgs, 12, NULL);
 
   printf("Starting FreeRTOS-SMP scheduler...\n\n");
   vTaskStartScheduler();
@@ -470,5 +363,115 @@ static void connectWifiTask(void *) {
       }
     }
     vTaskDelay(pdMS_TO_TICKS(60000));
+  }
+}
+
+static err_t influxOnConnected(void *arg, struct tcp_pcb *tpcb, err_t err) {
+  influx_client_t* state = (influx_client_t*)arg;
+
+  if (err != ERR_OK) {
+    printf("Connection Error: %d\n", err);
+    state->complete = true;
+    return err;
+  }
+
+  state->connected = true;
+  printf("Connected to InfluxDB\n");
+
+  const RMSWaveform* data = state->data;
+
+  static char body[256];
+  snprintf(body, sizeof(body),
+    "pico2,source=pico_ev_charger id=%lu,voltage=%.2f,current=%.2f,activePower=%.2f,reactivePower=%.2f,power=%.2f,powerFactor=%.2f",
+    data->id, data->voltage, data->current, data->activePower,
+    data->reactivePower, data->power, data->powerFactor
+  );
+
+  static char request[512];
+  snprintf(request, sizeof(request),
+    "POST /api/v2/write?org=%s&bucket=%s&precision=s HTTP/1.1\r\n"
+    "Host: %d.%d.%d.%d\r\n"
+    "Authorization: Token %s\r\n"
+    "Content-Type: text/plain\r\n"
+    "Content-Length: %d\r\n"
+    "Connection: close\r\n"
+    "\r\n"
+    "%s",
+    INFLUX_ORG, INFLUX_BUCKET,
+    INFLUX_IP_1, INFLUX_IP_2, INFLUX_IP_3, INFLUX_IP_4,
+    INFLUX_TOKEN,
+    strlen(body),
+    body
+  );
+
+  tcp_write(tpcb, request, strlen(request), TCP_WRITE_FLAG_COPY);
+  return tcp_output(tpcb);
+}
+
+static err_t influxOnReceive(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
+  influx_client_t* state = (influx_client_t*)arg;
+
+  if (!p) {
+    printf("Connection closed by server\n\n");
+    state->complete = true;
+
+    if (tpcb) {
+      tcp_arg(tpcb, NULL);
+      tcp_close(tpcb);
+      state->pcb = NULL;
+    }
+
+    return ERR_OK;
+  }
+
+  char *response = (char*)malloc(p->tot_len + 1);
+  pbuf_copy_partial(p, response, p->tot_len, 0);
+  response[p->tot_len] = '\0';
+  printf("InfluxDB response:\n%s\n", response);
+  free(response);
+
+  tcp_recved(tpcb, p->tot_len);
+  pbuf_free(p);
+
+  return ERR_OK;
+}
+
+static void influxOnError(void *arg, err_t err) {
+  printf("TCP Error: %d\n", err);
+  influx_client_t* state = (influx_client_t*)arg;
+
+  if (state->pcb) {
+    tcp_abort(state->pcb);
+    state->pcb = NULL;
+  }
+
+  state->complete = true;
+}
+
+
+void sendToInflux(const RMSWaveform* data) {
+  if (!isConnected || influxState.pcb != NULL) return;
+
+  influxState = {0};
+  influxState.pcb = tcp_new();
+  influxState.data = data;
+
+  if (!influxState.pcb) {
+    printf("Failed to create PCB\n");
+    return;
+  }
+
+  tcp_arg(influxState.pcb, &influxState);
+  tcp_err(influxState.pcb, influxOnError);
+  tcp_recv(influxState.pcb, influxOnReceive);
+
+  ip_addr_t influx_ip;
+  IP4_ADDR(&influx_ip, INFLUX_IP_1, INFLUX_IP_2, INFLUX_IP_3, INFLUX_IP_4);
+
+  err_t err = tcp_connect(influxState.pcb, &influx_ip, INFLUX_PORT, influxOnConnected);
+  if (err != ERR_OK) {
+    printf("Failed to connect: %d\n", err);
+    tcp_abort(influxState.pcb);
+    influxState.pcb = NULL;
   }
 }
