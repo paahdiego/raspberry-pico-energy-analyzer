@@ -6,6 +6,8 @@ This is the code behind my undergraduate thesis in Electrical Engineering at UFP
 
 > 📄 **[Real-Time Power Measurement System for Electric Vehicle Chargers](https://ieeexplore.ieee.org/document/11368787)** (IEEE)
 > Patrick Diego Alves da Silva, Camila Seibel Gehrke, Lucas Vinicius Hartmann. Department of Electrical Engineering, Federal University of Paraíba (UFPB)
+>
+> 🎓 **[Undergraduate thesis (PDF, Portuguese)](docs/thesis.pdf)**: *Sistema de medição de energia em tempo real para carregadores de veículos elétricos*, UFPB, 2025
 
 <p align="center">
   <img src="docs/images/ev-charging-test.jpeg" width="420" alt="Field test with an electric vehicle charging"/>
